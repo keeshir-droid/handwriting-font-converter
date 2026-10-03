@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Handwriting Font — turn your handwriting into a font</title>
+<meta name="description" content="Copy a short list onto paper, take one photo, then type anything in your own handwriting. Save it as a PDF or image, or use it as a font. Free. Nothing leaves your device.">
+<meta name="theme-color" content="#f6f2ea">
+<link rel="stylesheet" href="src/styles.css">
+</head>
+<body>
+
+<header class="top">
+  <a class="brand" href="./">Handwriting<em>→</em>Font</a>
+  <button class="linkbtn" id="topBack" hidden>Back to writing</button>
+</header>
+
+<main>
+
+<!-- ============ 1. SET UP ============ -->
+<section id="screen-setup" class="screen" aria-labelledby="h-setup">
+  <div class="hero">
+    <p class="eyebrow">Free · about 5 minutes · nothing leaves your device</p>
+    <h1 id="h-setup">Turn your handwriting into a font.</h1>
+    <p class="lead">Copy a short list onto paper and take one photo. Then type anything and see it in your own handwriting. Save it as a PDF or picture to send to someone you miss, or use it as a real font in Word, Canva and more.</p>
+    <div class="saved-banner" id="savedBanner" hidden>
+      <span>You already made a font: <b id="savedName"></b>.</span>
+      <button class="btn primary" id="backToWriting">Back to writing</button>
+    </div>
+  </div>
+
+  <div class="steps">
+    <div class="step"><b>1</b><h3>Write</h3><p>Copy the list below onto plain paper, with a comma after every item.</p></div>
+    <div class="step"><b>2</b><h3>Photograph</h3><p>One clear photo, from straight above, in good light.</p></div>
+    <div class="step"><b>3</b><h3>Add it here</h3><p>Each letter is rebuilt as a crisp vector, so it looks neat and still like you.</p></div>
+  </div>
+
+  <div class="two">
+    <div class="card">
+      <h2>Copy this onto paper</h2>
+      <p class="small" style="margin-top:6px">Write each item, then a comma. Any number of lines is fine.</p>
+      <p class="list-text" id="listText" aria-label="The characters to write"></p>
+      <ul class="tips">
+        <li>Use a dark pen or marker on plain white paper.</li>
+        <li>Put a comma after <b>every</b> item. That is how I tell the letters apart.</li>
+        <li>Leave a little space after each comma, and skip a line between rows.</li>
+        <li>Write at your normal size, roughly the same size throughout.</li>
+        <li>Photograph from straight above, with no shadow of your hand or phone.</li>
+      </ul>
+    </div>
+
+    <div>
+      <div class="drop" id="drop">
+        <h3>Add your photo</h3>
+        <p class="small" id="dropHint">Drop your photo here, paste it, or choose a file.</p>
+        <div class="row">
+          <button class="btn primary" id="btnCamera" hidden>Take a photo</button>
+          <button class="btn" id="btnChoose">Choose a photo</button>
+        </div>
+        <input type="file" id="fileCamera" accept="image/*" capture="environment" hidden>
+        <input type="file" id="fileChoose" accept="image/*" hidden>
+      </div>
+      <p class="privacy"><span aria-hidden="true">🔒</span><span>Your photo and your handwriting stay on this device. Nothing is uploaded, and there is no account.</span></p>
+      <p style="margin-top:14px"><button class="linkbtn" id="trySample">No paper handy? Try it with a sample sheet</button></p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 2. REVIEW ============ -->
+<section id="screen-review" class="screen" hidden aria-live="polite">
+  <div id="reviewBusy" class="center">
+    <div class="spinner" role="status"></div>
+    <h2>Reading your handwriting…</h2>
+    <p class="lead" style="margin-inline:auto">This takes a few seconds.</p>
+  </div>
+
+  <div id="reviewDone" hidden>
+    <p class="eyebrow" id="reviewEyebrow"></p>
+    <h2 id="reviewTitle"></h2>
+    <p class="lead" id="reviewMsg"></p>
+    <div id="reviewNotices"></div>
+    <div class="shot"><canvas id="shotCanvas" aria-label="Your photo with the letters I found marked in boxes"></canvas></div>
+    <div class="legend" id="legend" hidden>
+      <span><i style="background:#2e9e66"></i>a letter I found</span>
+      <span><i style="background:#8a8a8a"></i>a comma</span>
+      <span><i style="background:#e0a800"></i>an extra mark</span>
+      <span><i style="background:#d6402d"></i>where I got confused</span>
+    </div>
+
+    <div id="reviewOk" hidden>
+      <h3 style="margin-top:22px">Your letters</h3>
+      <div class="grid" id="glyphGrid"></div>
+      <div class="field">
+        <label for="fontName">Name your font</label>
+        <input class="input" id="fontName" maxlength="40" value="My Handwriting" autocomplete="off">
+      </div>
+      <div class="actions">
+        <button class="btn primary" id="startWriting">Looks great, start writing</button>
+        <button class="btn" id="anotherPhoto1">Try another photo</button>
+      </div>
+    </div>
+
+    <div id="reviewFail" hidden>
+      <div class="actions">
+        <button class="btn primary" id="anotherPhoto2">Choose another photo</button>
+        <button class="btn" id="backToSetup">See the tips again</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 3. WRITE ============ -->
+<section id="screen-write" class="screen" hidden aria-label="Write">
+  <div class="write">
+    <div class="paper-col">
+      <div class="phone-input">
+        <label class="small" for="phoneText" style="display:block;margin-bottom:6px">Type here. Your handwriting appears below.</label>
+        <textarea id="phoneText" rows="4" placeholder="Write something kind…" autocapitalize="sentences"></textarea>
+      </div>
+      <div class="paper-wrap" id="paperWrap">
+        <canvas id="paper"></canvas>
+        <div class="sel-layer" id="selLayer"></div>
+        <div class="caret" id="caret" hidden></div>
+        <textarea id="deskText" aria-label="Type on the page" spellcheck="false" autocomplete="off" autocapitalize="sentences"></textarea>
+      </div>
+      <p class="paper-hint">Click the page and type anything.</p>
+      <p class="small" id="missingNote" hidden style="text-align:center;max-width:640px"></p>
+      <div class="tools">
+        <button class="linkbtn" id="clearPage">Clear page</button>
+        <button class="linkbtn" id="redo">Redo my handwriting</button>
+      </div>
+      <p class="status" id="status" role="status" aria-live="polite"></p>
+    </div>
+
+    <aside class="panel">
+      <div class="card c-name">
+        <h3>Font name</h3>
+        <input class="input" id="nameInput" maxlength="40" aria-label="Font name" autocomplete="off">
+      </div>
+
+      <div class="card c-style">
+        <h3>Ink</h3>
+        <div class="swatches" id="inkSwatches" role="radiogroup" aria-label="Ink color"></div>
+        <h3 style="margin-top:18px">Paper</h3>
+        <div class="swatches" id="paperSwatches" role="radiogroup" aria-label="Paper color"></div>
+        <div class="row"><label for="linesToggle">Lines</label><span class="switch"><input type="checkbox" id="linesToggle"><i></i></span></div>
+        <h3 style="margin-top:18px">Page</h3>
+        <div class="seg" id="pageSeg" role="radiogroup" aria-label="Page size"></div>
+        <div class="row" style="margin-top:18px"><label for="sizeRange">Text size</label></div>
+        <input type="range" id="sizeRange" min="1" max="10" step="1" value="5">
+      </div>
+
+      <div class="card save-grid c-save">
+        <button class="btn primary stack" id="savePdf">Save as PDF<small>crisp, ready to print</small></button>
+        <button class="btn stack" id="saveImage">Save as image<small>PNG picture</small></button>
+        <button class="btn stack" id="sharePage" hidden>Share…<small>send it to someone</small></button>
+        <button class="btn stack" id="saveFont">Get the font (.ttf)<small>for Word, Canva and more</small></button>
+      </div>
+
+      <div class="card anywhere">
+        <h3>Use it anywhere</h3>
+        <p>Your handwriting is also a real font. Type here, or take it to Microsoft Word, Canva and more.</p>
+        <button class="btn" id="showHow">Show me how</button>
+      </div>
+    </aside>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <span>Made by one person for people who miss people. Free and open.</span>
+  <span>Questions or ideas? <a id="feedbackLink" href="#" target="_blank" rel="noopener">Tell me</a>.</span>
+</footer>
+
+<!-- ============ FONT HELP ============ -->
+<dialog id="fontDlg" aria-labelledby="dlgTitle">
+  <div class="dlg">
+    <header>
+      <div>
+        <h2 id="dlgTitle">Your font</h2>
+        <p class="small" id="dlgSub"></p>
+      </div>
+      <button class="x" id="dlgClose" aria-label="Close">×</button>
+    </header>
+
+    <div class="actions" style="margin-top:0">
+      <button class="btn primary" id="dlgDownload">Download font file</button>
+      <button class="btn" id="dlgShare" hidden>Send it to myself…</button>
+    </div>
+    <p class="small" id="dlgPhoneNote" hidden>On a phone, use “Send it to myself” to put the file in Drive, email or Files. Fonts can be installed on a computer, not on a phone.</p>
+
+    <h3>1. Install it on your computer</h3>
+    <div class="tabs" role="tablist" id="osTabs">
+      <button role="tab" data-os="win" aria-selected="false">Windows</button>
+      <button role="tab" data-os="mac" aria-selected="false">Mac</button>
+    </div>
+    <div id="osWin" hidden>
+      <ol>
+        <li>Open your Downloads folder.</li>
+        <li>Right-click the font file and choose <b>Install</b>. (Or double-click it, then click Install.)</li>
+        <li>Close and reopen the app you want to use it in.</li>
+      </ol>
+    </div>
+    <div id="osMac" hidden>
+      <ol>
+        <li>Open your Downloads folder.</li>
+        <li>Double-click the font file, then click <b>Install Font</b>.</li>
+        <li>Close and reopen the app you want to use it in.</li>
+      </ol>
+    </div>
+
+    <h3>2. Use it</h3>
+    <table>
+      <tr><td>Microsoft Word (desktop)</td><td class="yes">Yes. Pick it from the font menu. To send a document to someone, save it as PDF so they see your handwriting.</td></tr>
+      <tr><td>PowerPoint, Pages, Keynote</td><td class="yes">Yes, once installed.</td></tr>
+      <tr><td>Photoshop, Premiere, DaVinci, Final Cut</td><td class="yes">Yes, once installed. CapCut and Figma desktop: worth a try.</td></tr>
+      <tr><td>Canva</td><td class="maybe">Only on Canva Pro, Teams or Education: Brand Hub → Fonts → Upload. Free Canva can’t add fonts, so use the image instead.</td></tr>
+      <tr><td>Google Docs and Slides</td><td class="no">Can’t use custom fonts. Send the PDF or image instead.</td></tr>
+      <tr><td>Word on the web</td><td class="maybe">Probably not. Check, or use the PDF.</td></tr>
+      <tr><td>Instagram, TikTok text tools</td><td class="no">Built-in fonts only. Post the image instead.</td></tr>
+    </table>
+    <p class="small">One honest limit: the font draws each letter the same way every time, so a double letter (like “ll”) looks identical. The PDF and image add a tiny natural wobble. A font file can’t.</p>
+  </div>
+</dialog>
+
+<script src="src/charset.js"></script>
+<script src="src/outline.js"></script>
+<script src="src/reader.js"></script>
+<script src="src/tracer.js"></script>
+<script src="src/library.js"></script>
+<script src="src/fontwriter.js"></script>
+<script src="src/layout.js"></script>
+<script src="src/pdfwriter.js"></script>
+<script src="src/app.js"></script>
+</body>
+</html>
