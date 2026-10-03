@@ -665,7 +665,7 @@
     renderList();
     const saved = loadSaved();
     if (saved) {
-      state.lib = saved.lib; state.name = saved.name || state.name;
+      state.lib = HF.library.normalize(saved.lib); state.name = saved.name || state.name;
       state.ink = saved.ink || state.ink; state.paper = saved.paper || state.paper;
       state.lines = !!saved.lines; state.page = HF.layout.PAGES[saved.page] ? saved.page : "card";
       state.size = saved.size || 5; state.text = typeof saved.text === "string" ? saved.text : SAMPLE_NOTE;

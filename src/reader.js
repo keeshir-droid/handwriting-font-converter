@@ -295,14 +295,23 @@
     // Stacked pieces join when their centres line up (a dot over a stem), not merely when they are near.
     const tolSide = 0.005 * hRef, maxStackGap = 0.38 * hRef, centreTol = 0.2 * hRef;
     // a comma tucked under the corner of a letter is NOT part of that letter (a dot over a stem is)
-    const isComma = function (c) { return !!proto && commaDist({ w: c.x1 - c.x0 + 1, h: c.y1 - c.y0 + 1, area: c.area }, proto) < 0.9; };
+    const commaD = function (c) { return proto ? commaDist({ w: c.x1 - c.x0 + 1, h: c.y1 - c.y0 + 1, area: c.area }, proto) : Infinity; };
     const isBig = function (c) { return (c.y1 - c.y0 + 1) >= 0.55 * hRef; };
+    // c is a comma hanging off the lower right of the big piece b: clearly comma-shaped, or somewhat larger than the
+    // usual comma but then it must really start in the lower part of the letter (the leg of an M never does)
+    const commaOf = function (c, b) {
+      const d = commaD(c);
+      if (d < 0.9) return true;
+      if (d >= 1.5) return false;
+      const bh = b.y1 - b.y0 + 1, bw = b.x1 - b.x0 + 1;
+      return c.y0 >= b.y0 + 0.4 * bh && (c.x0 + c.x1) / 2 >= b.x0 + 0.4 * bw;
+    };
     for (let ai = 0; ai < order.length; ai++) {
       const a = comps[order[ai]];
       for (let bi = ai + 1; bi < order.length; bi++) {
         const b = comps[order[bi]];
         if (b.x0 - centreTol > a.x1) break; // sorted by left edge: nothing further right can match
-        if ((isComma(a) && isBig(b)) || (isComma(b) && isBig(a))) continue;
+        if ((isBig(b) && commaOf(a, b)) || (isBig(a) && commaOf(b, a))) continue;
         const gapY = Math.max(a.y0, b.y0) - Math.min(a.y1, b.y1) - 1;
         const overlapX = !(a.x0 - tolSide > b.x1 || b.x0 - tolSide > a.x1);
         let join = false;
