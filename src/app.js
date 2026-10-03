@@ -6,7 +6,7 @@
 
   const STORE_KEY = "hfc.v1";
   const MAX_SIDE = 2600; // photos are shrunk to this many pixels on the long side before reading
-  const FEEDBACK_URL = ""; // set to the repo's issues page once it exists
+  const FEEDBACK_URL = "https://github.com/keeshir-droid/handwriting-font-converter/issues";
 
   const INKS = [["Black", "#1A1A1A"], ["Blue", "#1F3F8F"], ["Navy", "#14284B"], ["Green", "#1F5A3C"], ["Burgundy", "#7A1F2B"], ["Purple", "#52308A"], ["Cream", "#F6F1E7"]];
   const PAPERS = [["White", "#FFFFFF"], ["Cream", "#FBF4E4"], ["Blush", "#FBE9E7"], ["Sky", "#E8F1FA"], ["Sage", "#E9F0E4"], ["Night", "#1F2430"]];
