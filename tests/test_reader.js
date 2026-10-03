@@ -12,7 +12,7 @@ if (!names.length) names = fs.readdirSync(dir).filter((f) => f.endsWith(".rgba")
 // what we expect to happen for each fake photo
 const EXPECT = {
   clean_ink: "ok", clean_script: "ok", clean_comic: "ok", tilt: "ok", shadow: "ok", table: "ok",
-  blur_light: "ok", blur_heavy: "ok", no_comma: "fail", faint: "fail", small: "ok", stray: "fail",
+  blur_light: "ok", blur_heavy: "ok", no_comma: "ok", faint: "fail", small: "ok", stray: "ok", rishi_big: "ok", rishi_native: "ok",
   persp_top: "ok", persp_side: "ok", persp_both: "ok", persp_hard: "ok",
 };
 

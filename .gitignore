@@ -8,3 +8,6 @@ node_modules/
 tests/out/
 .DS_Store
 Thumbs.db
+
+# personal handwriting photos used for tuning stay private
+tests/real/

@@ -285,7 +285,7 @@
   }
 
   // Joins pieces that belong to one character: the dot of an "i", the dot of "?", split letters.
-  function mergeIntoGroups(comps, hRef) {
+  function mergeIntoGroups(comps, hRef, proto) {
     const parent = comps.map(function (_, i) { return i; });
     function find(i) { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; }
     function union(a, b) { a = find(a); b = find(b); if (a !== b) parent[b] = a; }
@@ -293,18 +293,25 @@
     // Pieces stacked on top of each other (a dot above a stem) may be a little off to the side.
     // Pieces side by side (a comma next to a letter) must really overlap, or they are separate.
     // Stacked pieces join when their centres line up (a dot over a stem), not merely when they are near.
-    const tolSide = 0.03 * hRef, maxStackGap = 0.38 * hRef, centreTol = 0.2 * hRef;
+    const tolSide = 0.005 * hRef, maxStackGap = 0.38 * hRef, centreTol = 0.2 * hRef;
+    // a comma tucked under the corner of a letter is NOT part of that letter (a dot over a stem is)
+    const isComma = function (c) { return !!proto && commaDist({ w: c.x1 - c.x0 + 1, h: c.y1 - c.y0 + 1, area: c.area }, proto) < 0.9; };
+    const isBig = function (c) { return (c.y1 - c.y0 + 1) >= 0.55 * hRef; };
     for (let ai = 0; ai < order.length; ai++) {
       const a = comps[order[ai]];
       for (let bi = ai + 1; bi < order.length; bi++) {
         const b = comps[order[bi]];
         if (b.x0 - centreTol > a.x1) break; // sorted by left edge: nothing further right can match
+        if ((isComma(a) && isBig(b)) || (isComma(b) && isBig(a))) continue;
         const gapY = Math.max(a.y0, b.y0) - Math.min(a.y1, b.y1) - 1;
         const overlapX = !(a.x0 - tolSide > b.x1 || b.x0 - tolSide > a.x1);
         let join = false;
         if (gapY > 0) {
           const dcx = Math.abs((a.x0 + a.x1) / 2 - (b.x0 + b.x1) / 2);
-          join = gapY <= maxStackGap && (overlapX || dcx <= centreTol);
+          const bothSmall = (a.y1 - a.y0 + 1) < 0.55 * hRef && (b.y1 - b.y0 + 1) < 0.55 * hRef;
+          // a dot over a tall stem (i, j, !, ?) always belongs together. Two small marks stacked (": ; '" and a
+          // comma under an apostrophe) may or may not: that is decided later, by what the list expects there.
+          join = !bothSmall && gapY <= maxStackGap && (overlapX || dcx <= centreTol);
         } else {
           join = overlapX;
         }
@@ -331,20 +338,293 @@
     return groups;
   }
 
-  function sortIntoRows(groups, hRef) {
-    const byY = groups.slice().sort(function (a, b) { return a.cy - b.cy; });
-    const rows = [];
-    let cur = [];
-    for (let i = 0; i < byY.length; i++) {
-      if (cur.length && byY[i].cy - byY[i - 1].cy > 0.6 * hRef) { rows.push(cur); cur = []; }
-      cur.push(byY[i]);
-    }
-    if (cur.length) rows.push(cur);
-    rows.forEach(function (r, idx) {
-      r.sort(function (a, b) { return a.cx - b.cx; });
-      r.forEach(function (g, j) { g.row = idx; g.rowStart = j === 0; });
+  // Keep only marks that belong to the block of writing. Dust, table edges and shadows far from the writing are
+  // dropped before anything is counted, so they can never be mistaken for a character.
+  function keepTextRegion(groups, hRef) {
+    const core = groups.filter(function (g) { return g.h >= 0.5 * hRef; });
+    const dense = core.filter(function (c) {
+      let n = 0;
+      for (let i = 0; i < core.length; i++) {
+        const o = core[i];
+        if (o !== c && Math.abs(o.cx - c.cx) <= 4 * hRef && Math.abs(o.cy - c.cy) <= 4 * hRef) n++;
+      }
+      return n >= 2;
     });
+    if (dense.length < 10) return groups; // cannot tell where the writing is: keep everything
+    const near = function (g, o, r) { return Math.abs(g.cx - o.cx) <= r * hRef && Math.abs(g.cy - o.cy) <= r * hRef; };
+    const kept = [], rest = [];
+    groups.forEach(function (g) {
+      let ok = false;
+      for (let i = 0; i < dense.length && !ok; i++) ok = near(g, dense[i], 2.5);
+      (ok ? kept : rest).push(g);
+    });
+    // The writing region grows outward: a line that starts with a run of tiny marks (' - : ;) has no big letter
+    // beside it, but it sits right next to marks that belong to the writing. Dust far from everything stays out.
+    for (let pass = 0; pass < 4 && rest.length; pass++) {
+      let added = 0;
+      for (let i = rest.length - 1; i >= 0; i--) {
+        let ok = false;
+        for (let j = 0; j < kept.length && !ok; j++) ok = near(rest[i], kept[j], 2.2);
+        if (ok) { kept.push(rest[i]); rest.splice(i, 1); added++; }
+      }
+      if (!added) break;
+    }
+    return kept;
+  }
+
+  // Lines of writing: join every mark to its nearest neighbour to the right that is at about the same height
+  // (allowing the line to slope or wave), and call each connected chain a row. Rows are returned top to bottom,
+  // each left to right. This copes with sloping lines and with commas that hang below the line.
+  function chainIntoRows(groups, hRef) {
+    const n = groups.length;
+    const parent = groups.map(function (_, i) { return i; });
+    function find(i) { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; }
+    const order = groups.map(function (_, i) { return i; }).sort(function (a, b) { return groups[a].cx - groups[b].cx; });
+    for (let ai = 0; ai < n; ai++) {
+      const a = groups[order[ai]];
+      let best = -1, bestCost = Infinity;
+      for (let bi = ai + 1; bi < n; bi++) {
+        const b = groups[order[bi]];
+        const dx = b.cx - a.cx;
+        if (dx > 6 * hRef) break;
+        const dy = Math.abs(b.cy - a.cy);
+        if (dy > 0.9 * hRef) continue;
+        const cost = dx + 2 * dy;
+        if (cost < bestCost) { bestCost = cost; best = order[bi]; }
+      }
+      if (best >= 0) { const ra = find(order[ai]), rb = find(best); if (ra !== rb) parent[rb] = ra; }
+    }
+    const byRoot = new Map();
+    groups.forEach(function (g, i) { const r = find(i); if (!byRoot.has(r)) byRoot.set(r, []); byRoot.get(r).push(g); });
+    const rows = [];
+    byRoot.forEach(function (list) {
+      list.sort(function (a, b) { return Math.abs(a.cx - b.cx) < 0.3 * hRef ? a.cy - b.cy : a.cx - b.cx; });
+      rows.push(list);
+    });
+    const meanY = function (r) { return r.reduce(function (s2, g) { return s2 + g.cy; }, 0) / r.length; };
+    rows.sort(function (a, b) { return meanY(a) - meanY(b); });
+    rows.forEach(function (r, idx) { r.forEach(function (g, j) { g.row = idx; g.rowStart = j === 0; }); });
     return rows;
+  }
+
+  // two small marks stacked on each other that could be one character (":" ";" or an apostrophe over its comma)
+  function stackable(a, b, hRef) {
+    if (a.h >= 0.55 * hRef || b.h >= 0.55 * hRef) return false;
+    const gapY = Math.max(a.y0, b.y0) - Math.min(a.y1, b.y1) - 1;
+    return gapY > 0 && gapY <= 0.6 * hRef && Math.abs(a.cx - b.cx) <= 0.35 * hRef;
+  }
+  function mergeTwo(a, b) {
+    const x0 = Math.min(a.x0, b.x0), y0 = Math.min(a.y0, b.y0), x1 = Math.max(a.x1, b.x1), y1 = Math.max(a.y1, b.y1);
+    return { comps: a.comps.concat(b.comps), x0: x0, y0: y0, x1: x1, y1: y1, area: a.area + b.area, w: x1 - x0 + 1, h: y1 - y0 + 1, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, row: a.row, rowStart: a.rowStart };
+  }
+
+  // The writer wrote the same comma dozens of times, so the commas form a tight cluster of near-identical marks.
+  // Find that cluster and remember what "this person's comma" looks like: far more reliable than a size rule,
+  // because a small lowercase letter (a, c, e, m, n, u, w, x...) is about as tall as a comma.
+  function commaProfile(groups, hRef) {
+    const cand = groups.filter(function (g) { return g.h < 0.95 * hRef && g.h >= 0.2 * hRef && g.area >= 20; });
+    const like = function (a, b) {
+      return Math.abs(Math.log(a.w / b.w)) < 0.3 && Math.abs(Math.log(a.h / b.h)) < 0.3 && Math.abs(Math.log(a.area / b.area)) < 0.5;
+    };
+    let best = null;
+    cand.forEach(function (g) {
+      const nb = cand.filter(function (o) { return like(g, o); });
+      if (!best || nb.length > best.length) best = nb;
+    });
+    if (!best || best.length < 25) return null; // no clear cluster: fall back to plain size rules
+    const med = function (f) { return median(best.map(f)); };
+    return { w: med(function (g) { return g.w; }), h: med(function (g) { return g.h; }), area: med(function (g) { return g.area; }), n: best.length };
+  }
+  // 0 = exactly like this writer's comma, about 1 = the edge of what still looks like one
+  function commaDist(g, proto) {
+    return Math.max(Math.abs(Math.log(g.w / proto.w)) / 0.4, Math.abs(Math.log(g.h / proto.h)) / 0.4, Math.abs(Math.log(Math.max(1, g.area) / proto.area)) / 0.7);
+  }
+
+  // A comma that touches its letter ("4,"  "),") ends up in the same blob. Look for a comma-shaped piece hanging off
+  // the lower right of the glyph and cut it away. Thin necks are found by shrinking the mask a pixel or two.
+  function splitFusedComma(c, proto) {
+    if (!proto) return c;
+    const mw = c.mw, mh = c.mh, m = c.mask, n = mw * mh;
+    function erode(src) {
+      const out = new Uint8Array(n);
+      for (let y = 1; y < mh - 1; y++) {
+        for (let x = 1; x < mw - 1; x++) {
+          const i = y * mw + x;
+          if (src[i] && src[i - 1] && src[i + 1] && src[i - mw] && src[i + mw]) out[i] = 1;
+        }
+      }
+      return out;
+    }
+    let e = m;
+    for (let t = 1; t <= 2; t++) {
+      e = erode(e);
+      const lab = new Int16Array(n);
+      let nl = 0;
+      for (let s0 = 0; s0 < n; s0++) {
+        if (!e[s0] || lab[s0]) continue;
+        nl++; lab[s0] = nl;
+        const stack = [s0];
+        while (stack.length) {
+          const p0 = stack.pop();
+          const y = (p0 / mw) | 0, x = p0 - y * mw;
+          for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+            const ny = y + dy, nx = x + dx;
+            if (ny < 0 || ny >= mh || nx < 0 || nx >= mw) continue;
+            const q = ny * mw + nx;
+            if (e[q] && !lab[q]) { lab[q] = nl; stack.push(q); }
+          }
+        }
+      }
+      if (nl < 2) continue;
+      // give every ink pixel to the nearest surviving piece
+      const owner = new Int16Array(n);
+      let frontier = [];
+      for (let i = 0; i < n; i++) if (lab[i]) { owner[i] = lab[i]; frontier.push(i); }
+      for (let step = 0; step < t + 2 && frontier.length; step++) {
+        const next = [];
+        frontier.forEach(function (p0) {
+          const y = (p0 / mw) | 0, x = p0 - y * mw;
+          [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(function (d) {
+            const ny = y + d[1], nx = x + d[0];
+            if (ny < 0 || ny >= mh || nx < 0 || nx >= mw) return;
+            const q = ny * mw + nx;
+            if (m[q] && !owner[q]) { owner[q] = owner[p0]; next.push(q); }
+          });
+        });
+        frontier = next;
+      }
+      const st = [];
+      for (let l = 0; l <= nl; l++) st.push({ x0: mw, y0: mh, x1: -1, y1: -1, area: 0 });
+      for (let i = 0; i < n; i++) {
+        const l = owner[i];
+        if (!l) continue;
+        const y = (i / mw) | 0, x = i - y * mw, q = st[l];
+        if (x < q.x0) q.x0 = x; if (x > q.x1) q.x1 = x; if (y < q.y0) q.y0 = y; if (y > q.y1) q.y1 = y; q.area++;
+      }
+      let body = 1;
+      for (let l = 2; l <= nl; l++) if (st[l].area > st[body].area) body = l;
+      const B = st[body];
+      let pick = 0, pickD = 1.0;
+      for (let l = 1; l <= nl; l++) {
+        if (l === body) continue;
+        const q = st[l];
+        const d = commaDist({ w: q.x1 - q.x0 + 1, h: q.y1 - q.y0 + 1, area: q.area }, proto);
+        const bh = B.y1 - B.y0 + 1;
+        const lowerRight = q.y0 >= B.y0 + 0.5 * bh && q.y1 >= B.y1 - 1 && (q.x0 + q.x1) / 2 > B.x0 + 0.5 * (B.x1 - B.x0);
+        if (d < pickD && lowerRight && B.area >= 1.5 * q.area) { pickD = d; pick = l; }
+      }
+      if (!pick) continue;
+      const out = new Uint8Array(m);
+      for (let i = 0; i < n; i++) if (owner[i] === pick) out[i] = 0;
+      let x0 = mw, y0 = mh, x1 = -1, y1 = -1;
+      for (let i = 0; i < n; i++) if (out[i]) { const y = (i / mw) | 0, x = i - y * mw; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+      if (x1 < 0) return c;
+      const nw = x1 - x0 + 1, nh = y1 - y0 + 1, nm = new Uint8Array(nw * nh);
+      for (let y = 0; y < nh; y++) for (let x = 0; x < nw; x++) nm[y * nw + x] = out[(y + y0) * mw + x + x0];
+      return { mask: nm, mw: nw, mh: nh, ox: c.ox + x0, oy: c.oy + y0 };
+    }
+    return c;
+  }
+
+  // How believable is it that this mark is that character? (0 = fine; bigger = less likely)
+  function itemCost(it, g, hRef, proto) {
+    const r = g.h / hRef, ch = it.ch;
+    if (proto && (it.kind === "cap" || it.kind === "low" || it.kind === "digit" || "!?()&".indexOf(ch) >= 0) && commaDist(g, proto) < 0.7) {
+      return 2 + (it.kind === "cap" || it.kind === "digit" ? 1 : 0); // looks just like a comma: probably not a letter
+    }
+    if (it.kind === "cap" || it.kind === "digit") return r < 0.55 ? (0.55 - r) * 8 : (r > 1.7 ? (r - 1.7) * 4 : 0);
+    if (it.kind === "low") return r < 0.2 ? (0.2 - r) * 8 : (r > 1.8 ? (r - 1.8) * 4 : 0);
+    if (ch === "." || ch === "-") return r > 0.5 ? (r - 0.5) * 8 : 0;
+    if (ch === ":" || ch === ";" || ch === "'") return r > 0.9 ? (r - 0.9) * 6 : 0;
+    return r < 0.5 ? (0.5 - r) * 8 : 0; // ! ? ( ) &
+  }
+  // How believable is it that this mark is the comma written after that item?
+  function commaCost(item, g, hRef, proto) {
+    let c = 0;
+    const r = g.h / hRef;
+    if (proto) {
+      const d = commaDist(g, proto);
+      if (d > 1) c += Math.min(4, (d - 1) * 2); // does not look like this writer's comma
+    } else if (r > 0.8) c += 3 + (r - 0.8) * 8; // too big to be a comma
+    const dx = (g.x0 - item.x1) / hRef; // gap between the item's right edge and the comma
+    if (dx > 1.2) c += (dx - 1.2) * 1.5;
+    if (dx < -0.8) c += (-0.8 - dx) * 1.5;
+    const dy = (g.cy - item.cy) / hRef; // positive = lower than the item's middle
+    if (dy < -0.5) c += (-0.5 - dy) * 3;
+    if (dy > 1.2) c += (dy - 1.2) * 3;
+    return c;
+  }
+  function skipCost(g, hRef, proto) {
+    if (proto && commaDist(g, proto) < 0.8) return 2.6; // a real comma: dropping it is a bad explanation
+    return 0.3 + 2.2 * Math.min(1, g.h / hRef);
+  }
+  var _unusedSkip = function () {}; // ignoring a speck is cheap, ignoring a letter is not
+
+  // Finds the best way to read the marks (in reading order) as "item, comma, item, comma ..." for the whole list.
+  // Instead of trusting each mark in turn, it considers skipping stray marks, a missing comma, and stacked marks
+  // that are one character, and keeps the cheapest overall explanation.
+  function alignSequence(seq, items, hRef, proto) {
+    const M = seq.length, N = items.length;
+    const INF = 1e9, WINDOW = 8, CWINDOW = 6, MISSING_COMMA = 3.5;
+    const pre = new Float64Array(M + 1);
+    for (let i = 0; i < M; i++) pre[i + 1] = pre[i] + skipCost(seq[i], hRef, proto);
+    const trail = new Float64Array(M + 1); // cost of ignoring everything from node k to the end
+    for (let i = M - 1; i >= 0; i--) trail[i] = trail[i + 1] + 0.05 + 1.2 * Math.min(1, seq[i].h / hRef);
+    const merged = new Array(M);
+    for (let i = 0; i + 1 < M; i++) merged[i] = stackable(seq[i], seq[i + 1], hRef) ? mergeTwo(seq[i], seq[i + 1]) : null;
+
+    const size = (M + 2) * (N + 1);
+    const dp = new Float64Array(size).fill(INF);
+    const bk = new Int32Array(size).fill(-1), bj = new Int32Array(size).fill(-1), bm = new Int8Array(size), bc = new Int32Array(size).fill(-1);
+    const at = function (k, i) { return k * (N + 1) + i; };
+    dp[at(0, 0)] = 0;
+    for (let k = 0; k <= M; k++) {
+      for (let i = 0; i < N; i++) {
+        const cur = dp[at(k, i)];
+        if (cur >= INF) continue;
+        for (let j = k; j <= Math.min(k + WINDOW, M - 1); j++) {
+          const base = cur + (pre[j] - pre[k]);
+          for (let m = 0; m < 2; m++) {
+            let node = seq[j], e = j + 1;
+            if (m === 1) { if (!merged[j]) continue; node = merged[j]; e = j + 2; }
+            let b2 = base + itemCost(items[i], node, hRef, proto);
+            if (m === 0 && (items[i].ch === ":" || items[i].ch === ";") && (merged[j] || (j > 0 && merged[j - 1]))) b2 += 1.5;
+            const last = i === N - 1;
+            // (a) no comma written after this item
+            let t = at(e, i + 1), v = b2 + (last ? 0 : MISSING_COMMA);
+            if (v < dp[t]) { dp[t] = v; bk[t] = k; bj[t] = j; bm[t] = m; bc[t] = -1; }
+            // (b) a comma a little further on (marks in between are ignored)
+            for (let c = e; c <= Math.min(e + CWINDOW, M - 1); c++) {
+              t = at(c + 1, i + 1);
+              v = b2 + (pre[c] - pre[e]) + commaCost(node, seq[c], hRef, proto);
+              if (v < dp[t]) { dp[t] = v; bk[t] = k; bj[t] = j; bm[t] = m; bc[t] = c; }
+            }
+          }
+        }
+      }
+    }
+    let bestK = -1, best = INF;
+    for (let k = 0; k <= M; k++) {
+      const v = dp[at(k, N)] + trail[k]; // specks after the last character are free, letter-sized marks are not
+      if (v < best) { best = v; bestK = k; }
+    }
+    if (bestK < 0) return null;
+    const placed = [], used = new Uint8Array(M);
+    let k = bestK, i = N;
+    while (i > 0) {
+      const t = at(k, i);
+      const j = bj[t], m = bm[t], c = bc[t];
+      const node = m === 1 ? merged[j] : seq[j];
+      placed.push({ item: node, comma: c >= 0 ? seq[c] : null });
+      used[j] = 1; if (m === 1) used[j + 1] = 1; if (c >= 0) used[c] = 1;
+      k = bk[t]; i--;
+    }
+    placed.reverse();
+    const skipped = [];
+    let first = M;
+    for (let q = 0; q < M; q++) if (used[q] && q < first) first = q;
+    for (let q = 0; q < M; q++) if (!used[q] && q >= first) skipped.push(seq[q]);
+    return { placed: placed, skipped: skipped, cost: best };
   }
 
   // ---------- photo-quality measurements ----------
@@ -467,43 +747,32 @@
     result.stats.hRef = hRef;
 
     // 3) characters and rows
-    const groups = mergeIntoGroups(kept, hRef).filter(function (g) { return g.area >= 14; });
-    const rows = sortIntoRows(groups, hRef);
+    const earlyProto = commaProfile(kept.map(function (c) { return { w: c.x1 - c.x0 + 1, h: c.y1 - c.y0 + 1, area: c.area }; }), hRef);
+    let groups = mergeIntoGroups(kept, hRef, earlyProto).filter(function (g) { return g.area >= 14; });
+    groups = keepTextRegion(groups, hRef);
+    const rows = chainIntoRows(groups, hRef);
+    if (options.debug) result.debug = { mask: mask, w: w, h: h, groups: groups, rows: rows, hRef: hRef };
     const seq = [];
     rows.forEach(function (r) { r.forEach(function (g) { seq.push(g); }); });
     result.stats.groups = seq.length;
     result.stats.rows = rows.length;
 
-    // 4) walk through: item, comma, item, comma ...
-    const found = [], commas = [], extras = [];
-    let state = "item";
-    let problem = null;
-    for (let gi = 0; gi < seq.length && !problem; gi++) {
-      const g = seq[gi];
-      if (state === "item") {
-        if (found.length >= N) { extras.push(g); continue; }
-        found.push(g);
-        state = "comma";
-      } else {
-        const looksLikeLetter = g.h >= 0.8 * hRef;
-        if (found.length >= N) {
-          if (!looksLikeLetter) commas.push(g); else extras.push(g);
-          state = "item";
-        } else if (!looksLikeLetter) {
-          commas.push(g);
-          state = "item";
-        } else if (g.rowStart) {
-          // a missing comma at the end of a line is fine
-          result.stats.missingLineEndCommas = (result.stats.missingLineEndCommas || 0) + 1;
-          found.push(g);
-          state = "comma";
-        } else {
-          problem = { group: g, after: found.length - 1 };
-        }
-      }
+    // 4) match the marks to the list: item, comma, item, comma ... (skipping stray marks)
+    const proto = earlyProto || commaProfile(groups, hRef);
+    result.stats.comma = proto;
+    const aligned = alignSequence(seq, items, hRef, proto);
+    if (!aligned) {
+      fail("count", "I found only about " + Math.floor(seq.length / 2) + " of " + N + " characters.",
+        "Check that you wrote the whole list, with a comma after every item, and that the whole page is in the photo.");
+      return result;
     }
-    if (found.length >= N && extras.length) {
-      result.warnings.push({ code: "extras", title: "I ignored " + extras.length + " extra mark" + (extras.length > 1 ? "s" : "") + " after the last character.", detail: "" });
+    result.stats.alignCost = aligned.cost;
+    const found = aligned.placed.map(function (p) { return p.item; });
+    const commas = aligned.placed.filter(function (p) { return p.comma; }).map(function (p) { return p.comma; });
+    const extras = aligned.skipped;
+    result.stats.missingCommas = aligned.placed.length - commas.length;
+    if (extras.length) {
+      result.warnings.push({ code: "extras", title: "I ignored " + extras.length + " stray mark" + (extras.length > 1 ? "s" : "") + " on the page.", detail: "Specks, smudges and marks that didn’t belong to a character." });
     }
 
     // overlay boxes, labelled with what each box was taken to be
@@ -517,22 +786,6 @@
       result.overlay.boxes.push({ x0: g.x0, y0: g.y0, x1: g.x1, y1: g.y1, kind: "extra", label: "?" });
     });
 
-    if (problem) {
-      const g = problem.group;
-      result.overlay.boxes.push({ x0: g.x0, y0: g.y0, x1: g.x1, y1: g.y1, kind: "problem", label: "!" });
-      const prev = problem.after >= 0 ? items[problem.after].ch : null;
-      fail("comma", "I think a comma is missing" + (prev ? " after the “" + prev + "”" : "") + ".",
-        "I found a letter where I expected a comma (the red box). Put a comma after every character and leave a little space before the next one, then take the photo again.");
-      return result;
-    }
-    if (found.length < N) {
-      const last = found.length ? items[found.length - 1].ch : null;
-      fail("count", "I found " + found.length + " of " + N + " characters.",
-        (last ? "I got as far as “" + last + "”. " : "") +
-        "This usually means two letters are touching, a comma is missing, or the page is cut off. Check the boxes on the photo: each should hold one character. Leave more space between characters and between lines.");
-      return result;
-    }
-
     // 5) sizes: the baseline and writing size of every row
     const rowInfo = {};
     rows.forEach(function (_, ri) { rowInfo[ri] = { bottoms: [], allBottoms: [], bx: [], by: [], caps: [], digits: [] }; });
@@ -545,33 +798,27 @@
     Object.keys(rowInfo).forEach(function (k) {
       const r = rowInfo[k];
       r.baseline = r.bottoms.length ? median(r.bottoms) : (r.allBottoms.length ? median(r.allBottoms) : 0);
-      // handwriting on plain paper drifts up or down along a line: fit a sloped baseline y = a + b*x
-      r.slope = 0; r.offset = r.baseline;
+      // Handwriting on plain paper drifts and waves, so the baseline AT a letter is whatever its nearest letters
+      // sit on (median of the closest few), not one straight line for the whole row.
+      // One robust slope for the whole row (Theil-Sen: shrugs off odd letters) gives the overall lean of the line.
+      // Then the nearest few letters adjust it locally, so a wavy line is followed without wild guesses far
+      // from any measured letter (a line of punctuation may have only a few reliable letters at one end).
+      let rowSlope = 0;
       if (r.bx.length >= 6) {
-        let xs = r.bx, ys = r.by;
-        for (let pass = 0; pass < 2; pass++) {
-          const n = xs.length;
-          let sx = 0, sy = 0, sxx = 0, sxy = 0;
-          for (let j = 0; j < n; j++) { sx += xs[j]; sy += ys[j]; sxx += xs[j] * xs[j]; sxy += xs[j] * ys[j]; }
-          const den = n * sxx - sx * sx;
-          if (den <= 0) break;
-          const b = (n * sxy - sx * sy) / den, a = (sy - b * sx) / n;
-          const res = ys.map(function (y, j) { return Math.abs(y - (a + b * xs[j])); });
-          r.slope = b; r.offset = a;
-          if (pass === 0) { // drop letters far from the line (a wobbly one, a mis-measured one), then refit
-            const cut = Math.max(3, 2.5 * median(res));
-            const nx = [], ny = [];
-            for (let j = 0; j < n; j++) if (res[j] <= cut) { nx.push(xs[j]); ny.push(ys[j]); }
-            if (nx.length < 6) break;
-            xs = nx; ys = ny;
-          }
-        }
-        // keep the slope only if it clearly beats a flat line (otherwise it is just chasing wobble)
-        const flatMad = median(r.by.map(function (y) { return Math.abs(y - r.baseline); }));
-        const fitMad = median(r.bx.map(function (x, j) { return Math.abs(r.by[j] - (r.offset + r.slope * x)); }));
-        if (Math.abs(r.slope) > 0.15 || fitMad > 0.6 * flatMad) { r.slope = 0; r.offset = r.baseline; }
+        const sl = [];
+        for (let p = 0; p < r.bx.length; p++) for (let q = p + 1; q < r.bx.length; q++) if (Math.abs(r.bx[q] - r.bx[p]) > 60) sl.push((r.by[q] - r.by[p]) / (r.bx[q] - r.bx[p]));
+        if (sl.length) rowSlope = Math.max(-0.08, Math.min(0.08, median(sl)));
       }
-      r.baselineAt = function (x) { return r.offset + r.slope * x; };
+      r.slope = rowSlope;
+      r.baselineAt = function (x) {
+        if (!r.bx.length) return r.baseline;
+        const line = function (xx) { return rowSlope * xx; };
+        const idx = r.bx.map(function (_, j) { return j; }).sort(function (p, q) { return Math.abs(r.bx[p] - x) - Math.abs(r.bx[q] - x); }).slice(0, 6);
+        const resid = median(idx.map(function (j) { return r.by[j] - line(r.bx[j]); }));
+        // never extend the line beyond the measured letters: hold it steady there instead of guessing further
+        const xc = Math.max(Math.min.apply(null, r.bx), Math.min(Math.max.apply(null, r.bx), x));
+        return resid + line(xc);
+      };
     });
     found.forEach(function (g, i) {
       const it = items[i];
@@ -634,9 +881,11 @@
     }
     found.forEach(function (g, i) {
       const r = rowInfo[g.row];
-      const c = cut(g);
+      let c = cut(g);
+      if (".'-:;".indexOf(items[i].ch) < 0) c = splitFusedComma(c, proto);
       c.baseline = r.baselineAt(g.cx);
-      if (items[i].baselineOK && Math.abs(g.y1 + 1 - c.baseline) <= 0.3 * (700 / r.f)) c.baseline = g.y1 + 1; // snap onto the line
+      const bottom = c.oy + c.mh;
+      if ((items[i].baselineOK || ".:!?".indexOf(items[i].ch) >= 0) && Math.min(Math.abs(bottom - c.baseline), Math.abs(bottom - r.baseline)) <= 0.3 * (700 / r.f)) c.baseline = bottom; // snap onto the line
       c.f = r.f;
       c.ch = items[i].ch;
       result.glyphs[items[i].ch] = c;
@@ -667,5 +916,5 @@
     return result;
   }
 
-  HF.reader = { read: read, _internals: { inkMask: inkMask, findTilt: findTilt, labelBlobs: labelBlobs, mergeIntoGroups: mergeIntoGroups, sortIntoRows: sortIntoRows, measureQuality: measureQuality, toGray: toGray } };
+  HF.reader = { read: read, _internals: { inkMask: inkMask, findTilt: findTilt, labelBlobs: labelBlobs, mergeIntoGroups: mergeIntoGroups, chainIntoRows: chainIntoRows, measureQuality: measureQuality, toGray: toGray, splitFusedComma: splitFusedComma } };
 })();

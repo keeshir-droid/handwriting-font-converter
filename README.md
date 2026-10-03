@@ -83,7 +83,9 @@ A tiny natural wobble (a hair of rotation, height and size) is added to the PDF 
 - **Dense writing looked like table.** The code that finds the paper on a table first treated heavily written areas as "not paper" and erased letters. Fixed by treating anything surrounded by paper as paper.
 - **One stray speck scrambled the whole font.** A tiny mark between letters shifted every later letter by one slot (an "M" became a dot) and the app happily built a broken font. It now checks that each box has a believable size for its character and stops with a clear message instead.
 - **Real lines of handwriting aren't flat.** Writing on plain paper drifts up or down. Each line's baseline is now fitted as a slope, and ordinary letters sit exactly on it. Letters that hang below the line (g, j, p, q, y) keep their natural place.
-- **Tested on synthetic sheets so far.** About fifteen fake photos (tilted, blurry, shadowy, on a table, taken at an angle, with stray marks) were made with computer handwriting fonts. Real handwriting is messier, so expect to tune things as real photos arrive.
+- **The first real photo broke it.** It was built and tested on fake sheets made with computer handwriting fonts, and it fell over on a real, clean, well-written sheet. The reader read the marks strictly left to right and trusted every one: a speck of dust became "the next letter", a small "o" was mistaken for a comma, and one wrong guess shifted every letter after it. It now finds *this writer's own comma* (you write the same one 72 times, so they cluster tightly), ignores marks far from the writing, follows each line along its slope, and picks the best overall way to match the marks to the list instead of trusting them one by one.
+- **Commas that tuck under a letter got glued to it** (a "4," became one blob). Pieces now need to genuinely overlap to count as one character.
+- **Still limited testing.** About fifteen fake photos (tilted, blurry, shadowy, on a table, taken at an angle, with stray marks) plus **one** real handwriting sheet. More real handwriting will find more problems.
 
 ## Limits and what's next
 

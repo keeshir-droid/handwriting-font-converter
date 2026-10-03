@@ -5,7 +5,7 @@
   const HF = (globalThis.HF = globalThis.HF || {});
 
   const PUNCT = ".!?'-:;()&";
-  const NO_BASELINE = "gjpqyQJ"; // letters that hang below the line: don't use them to find the baseline
+  const NO_BASELINE = "gjpqyQJf"; // letters that hang below the line: don't use them to find the baseline
   const CAP_REF = "ABCDEFGHIKLMNOPRSTUVWXYZ"; // capitals used to measure writing size (J and Q can hang)
   const SMALL_ITEMS = ".'-:;"; // marks that are naturally tiny, so they may look "comma-like"
 
